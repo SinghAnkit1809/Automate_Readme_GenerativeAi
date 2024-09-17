@@ -1,13 +1,15 @@
 import argparse
 import os
+import sys
 from dotenv import load_dotenv
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.generator import AIReadmeGenerator
 from src.utils import setup_logging, load_config
 def main():
     load_dotenv()  # Load environment variables from .env file
     setup_logging()
     parser = argparse.ArgumentParser(description="Generate README.md using AI")
-    parser.add_argument("project_path", help="Path to the project directory")
+    parser.add_argument("project_path", help="Path to the project directory", type=str)
     parser.add_argument("--config", default="config/default_config.yaml", help="Path to configuration file")
     args = parser.parse_args()
     config = load_config(args.config)
@@ -20,6 +22,6 @@ def main():
     with open(readme_path, "w") as f:
         f.write(readme_content)
     print(f"README.md created successfully at {readme_path}")
-    
+
 if __name__ == "__main__":
     main()

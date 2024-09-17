@@ -1,44 +1,43 @@
+import argparse
 import os
-def scan_project(project_path: str) -> dict:
-    project_info = {
-        "files": [],
-        "directories": [],
-        "main_file": None,
-        "language": None,
-        "dependencies": set(),
-    }
-    for root, dirs, files in os.walk(project_path):
-        rel_path = os.path.relpath(root, project_path)
-        if rel_path != '.':
-            project_info["directories"].append(rel_path)
-        for file in files:
-            file_path = os.path.join(rel_path, file)
-            project_info["files"].append(file_path)
-            if file.lower() in ('main.py', 'index.js', 'app.py', 'server.js'):
-                project_info["main_file"] = file_path
-            if file.endswith('.py'):
-                project_info["language"] = "Python"
-                scan_python_dependencies(os.path.join(root, file), project_info["dependencies"])
-            elif file.endswith('.js'):
-                project_info["language"] = "JavaScript"
-                scan_js_dependencies(os.path.join(root, file), project_info["dependencies"])
-    project_info["dependencies"] = list(project_info["dependencies"])
-    return project_info
-def scan_python_dependencies(file_path: str, dependencies: set):
-    with open(file_path, 'r') as file:
-        for line in file:
-            if line.strip().startswith('import') or line.strip().startswith('from'):
-                parts = line.split()
-                if parts[0] == 'from':
-                    dependencies.add(parts[1].split('.')[0])
-                else:
-                    dependencies.add(parts[1].split('.')[0])
-def scan_js_dependencies(file_path: str, dependencies: set):
-    with open(file_path, 'r') as file:
-        for line in file:
-            if 'require(' in line:
-                start = line.index('require(') + 9
-                end = line.index(')', start)
-                module = line[start:end].strip('\'"')
-                if not module.startswith('.'):
-                    dependencies.add(module)
+import sys
+from dotenv import load_dotenv
+from src.generator import AIReadmeGenerator
+from src.utils import setup_logging, load_config
+
+def main():
+    load_dotenv()  # Load environment variables from .env file
+    setup_logging()
+
+    parser = argparse.ArgumentParser(description="Generate README.md using AI")
+    parser.add_argument("project_path", help="Path to the project directory", type=str)
+    parser.add_argument("--config", default="config/default_config.yaml", help="Path to configuration file")
+    args = parser.parse_args()
+
+    try:
+        config = load_config(args.config)
+    except Exception as e:
+        print(f"Error loading configuration: {str(e)}")
+        sys.exit(1)
+
+    api_key = os.getenv("GROQ_API_KEY")
+
+    if not api_key:
+        print("Error: GROQ_API_KEY not found in environment variables")
+        sys.exit(1)
+
+    try:
+        generator = AIReadmeGenerator(api_key=api_key)
+        readme_content = generator.create_readme(args.project_path, config['sections'])
+
+        readme_path = os.path.join(args.project_path, "README.md")
+        with open(readme_path, "w") as f:
+            f.write(readme_content)
+
+        print(f"README.md created successfully at {readme_path}")
+    except Exception as e:
+        print(f"An error occurred while generating the README: {str(e)}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()

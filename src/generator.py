@@ -1,12 +1,12 @@
 import logging
-from langchain.llms import Groq
-from langchain.prompts import PromptTemplate
+from langchain_groq import ChatGroq
+from langchain_core.prompts import PromptTemplate
 from langchain.chains import LLMChain
 from .file_scanner import scan_project
    
 class AIReadmeGenerator:
     def __init__(self, api_key: str):
-        self.llm = Groq(api_key=api_key)
+        self.llm = ChatGroq(api_key=api_key)
 
     def generate_readme_section(self, section_name: str, project_info: dict) -> str:
         template = f"""
