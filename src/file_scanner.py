@@ -1,43 +1,68 @@
-import argparse
 import os
 import sys
-from dotenv import load_dotenv
-from src.generator import AIReadmeGenerator
-from src.utils import setup_logging, load_config
+from typing import Dict, Any
 
-def main():
-    load_dotenv()  # Load environment variables from .env file
-    setup_logging()
+def scan_project(project_path: str) -> Dict[str, Any]:
+    files = []
+    directories = []
+    main_file = ""
+    language = ""
+    dependencies = []
 
-    parser = argparse.ArgumentParser(description="Generate README.md using AI")
-    parser.add_argument("project_path", help="Path to the project directory", type=str)
-    parser.add_argument("--config", default="config/default_config.yaml", help="Path to configuration file")
-    args = parser.parse_args()
+    # Scan the project directory
+    for root, dirs, filenames in os.walk(project_path):
+        for dir in dirs:
+            directories.append(os.path.relpath(os.path.join(root, dir), project_path))
+        for file in filenames:
+            file_path = os.path.relpath(os.path.join(root, file), project_path)
+            files.append(file_path)
+            
+            # Attempt to identify the main file and language
+            if file.lower() in ['main.py', 'app.py', 'index.py']:
+                main_file = file_path
+                language = 'Python'
+            elif file.lower() == 'package.json':
+                main_file = file_path
+                language = 'JavaScript/Node.js'
+                # Parse package.json for dependencies
+                try:
+                    import json
+                    with open(os.path.join(root, file), 'r') as f:
+                        package_data = json.load(f)
+                    dependencies = list(package_data.get('dependencies', {}).keys())
+                except:
+                    pass
+            elif file.lower().endswith('.java'):
+                if not main_file:  # Only set if not already set
+                    main_file = file_path
+                    language = 'Java'
 
-    try:
-        config = load_config(args.config)
-    except Exception as e:
-        print(f"Error loading configuration: {str(e)}")
-        sys.exit(1)
+    # If we haven't identified the language, make a guess based on file extensions
+    if not language:
+        extensions = [os.path.splitext(f)[1] for f in files if os.path.splitext(f)[1]]
+        if '.py' in extensions:
+            language = 'Python'
+        elif '.js' in extensions:
+            language = 'JavaScript'
+        elif '.java' in extensions:
+            language = 'Java'
+        else:
+            language = 'Unknown'
 
-    api_key = os.getenv("GROQ_API_KEY")
+    # For Python projects, try to parse requirements.txt for dependencies
+    if language == 'Python' and 'requirements.txt' in files:
+        try:
+            with open(os.path.join(project_path, 'requirements.txt'), 'r') as f:
+                dependencies = [line.strip().split('==')[0] for line in f if line.strip() and not line.startswith('#')]
+        except:
+            pass
 
-    if not api_key:
-        print("Error: GROQ_API_KEY not found in environment variables")
-        sys.exit(1)
+    return {
+        "files": files,
+        "directories": directories,
+        "main_file": main_file,
+        "language": language,
+        "dependencies": dependencies
+    }
 
-    try:
-        generator = AIReadmeGenerator(api_key=api_key)
-        readme_content = generator.create_readme(args.project_path, config['sections'])
-
-        readme_path = os.path.join(args.project_path, "README.md")
-        with open(readme_path, "w") as f:
-            f.write(readme_content)
-
-        print(f"README.md created successfully at {readme_path}")
-    except Exception as e:
-        print(f"An error occurred while generating the README: {str(e)}")
-        sys.exit(1)
-
-if __name__ == "__main__":
-    main()
+# The main() function has been removed as it's now in run_generator.py

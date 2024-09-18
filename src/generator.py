@@ -1,9 +1,9 @@
 import logging
 from langchain_groq import ChatGroq
-from langchain_core.prompts import PromptTemplate
-from langchain.chains import LLMChain
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 from .file_scanner import scan_project
-   
+
 class AIReadmeGenerator:
     def __init__(self, api_key: str):
         self.llm = ChatGroq(api_key=api_key)
@@ -21,9 +21,9 @@ class AIReadmeGenerator:
         Generate a concise and informative {section_name} section in Markdown format:
         """
         
-        prompt = PromptTemplate(template=template, input_variables=[])
-        chain = LLMChain(llm=self.llm, prompt=prompt)
-        return chain.run()
+        prompt = ChatPromptTemplate.from_template(template)
+        chain = prompt | self.llm | StrOutputParser()
+        return chain.invoke({"section_name": section_name})
 
     def create_readme(self, project_path: str, sections: list):
         logging.info(f"Scanning project: {project_path}")
