@@ -1,9 +1,4 @@
 sections:
-  - Project Title
-  - Description
-  - Installation
+  - Quick Overview
+  - Setup Instructions
   - Usage
-  - File Structure
-  - Dependencies
-  - Contributing
-  - License

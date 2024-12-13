@@ -1,75 +1,191 @@
 import logging
-import time
-from typing import Any, Dict
+import os
+import re
+from typing import Any, Dict, List
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
-from .file_scanner import scan_project
+from .file_scanner import quick_scan_project
 
 class AIReadmeGenerator:
     def __init__(self, api_key: str):
-        self.llm = ChatGroq(api_key=api_key)
+        self.llm = ChatGroq(
+            api_key=api_key, 
+            model_name="llama3-70b-8192"
+        )
 
-    def _truncate_list(self, lst, max_items=10):
-        if len(lst) > max_items:
-            return lst[:max_items] + [f"... and {len(lst) - max_items} more"]
-        return lst
+    def read_file_content(self, file_path: str) -> str:
+        """
+        Read the content of a file, handling different encodings and file sizes.
+        
+        Args:
+            file_path (str): Path to the file to read
+        
+        Returns:
+            str: File content or error message
+        """
+        try:
+            # Limit file reading to prevent memory issues
+            with open(file_path, 'r', encoding='utf-8') as file:
+                # Read first 10000 characters to prevent large files from overwhelming the system
+                return file.read(10000)
+        except Exception as e:
+            return f"Error reading file {file_path}: {str(e)}"
 
-    def _prepare_project_info(self, project_info: Dict[str, Any]) -> Dict[str, Any]:
-        return {
-            "files": self._truncate_list(project_info['files']),
-            "directories": self._truncate_list(project_info['directories']),
-            "main_file": project_info['main_file'],
-            "language": project_info['language'],
-            "dependencies": self._truncate_list(project_info['dependencies'])
+    def analyze_project_structure(self, project_path: str) -> Dict[str, Any]:
+        """
+        Perform a comprehensive analysis of the project.
+        
+        Args:
+            project_path (str): Path to the project directory
+        
+        Returns:
+            Dict: Detailed project analysis
+        """
+        # Use existing quick_scan_project for initial analysis
+        project_info = quick_scan_project(project_path)
+        
+        # Collect file contents
+        file_contents = {}
+        for file in project_info.get('files', []):
+            full_path = os.path.join(project_path, file)
+            if os.path.isfile(full_path):
+                file_contents[file] = self.read_file_content(full_path)
+        
+        # Extract docstrings and comments from main files
+        code_insights = {}
+        main_files = ['app.py', 'main.py', 'src/ui.py', 'src/generator.py']
+        for main_file in main_files:
+            full_path = os.path.join(project_path, main_file)
+            if os.path.exists(full_path):
+                code_insights[main_file] = self.extract_code_insights(full_path)
+        
+        # Combine all information
+        comprehensive_analysis = {
+            "project_structure": project_info,
+            "file_contents": file_contents,
+            "code_insights": code_insights,
+            "requirements": self.read_requirements(project_path)
+        }
+        
+        return comprehensive_analysis
+
+    def extract_code_insights(self, file_path: str) -> Dict[str, str]:
+        """
+        Extract insights from Python files.
+        
+        Args:
+            file_path (str): Path to the Python file
+        
+        Returns:
+            Dict: Extracted insights including docstrings, key functions, etc.
+        """
+        insights = {
+            "module_docstring": "",
+            "key_functions": [],
+            "key_classes": []
+        }
+        
+        try:
+            with open(file_path, 'r', encoding='utf-8') as file:
+                content = file.read()
+                
+                # Extract module-level docstring
+                module_docstring_match = re.search(r'"""(.*?)"""', content, re.DOTALL)
+                if module_docstring_match:
+                    insights['module_docstring'] = module_docstring_match.group(1).strip()
+                
+                # Find key functions
+                function_matches = re.findall(r'def\s+(\w+)\(.*?\):\s*"""(.*?)"""', content, re.DOTALL)
+                insights['key_functions'] = [
+                    f"{name}: {desc.strip()}" 
+                    for name, desc in function_matches
+                ]
+                
+                # Find key classes
+                class_matches = re.findall(r'class\s+(\w+).*?:\s*"""(.*?)"""', content, re.DOTALL)
+                insights['key_classes'] = [
+                    f"{name}: {desc.strip()}" 
+                    for name, desc in class_matches
+                ]
+        except Exception as e:
+            insights['error'] = str(e)
+        
+        return insights
+
+    def read_requirements(self, project_path: str) -> List[str]:
+        """
+        Read project requirements file.
+        
+        Args:
+            project_path (str): Path to the project directory
+        
+        Returns:
+            List[str]: List of requirements
+        """
+        try:
+            req_path = os.path.join(project_path, 'requirements.txt')
+            if os.path.exists(req_path):
+                with open(req_path, 'r') as f:
+                    return [line.strip() for line in f if line.strip() and not line.startswith('#')]
+            return []
+        except Exception:
+            return []
+
+    def generate_concise_readme(self, project_path: str) -> str:
+        """
+        Generate a README based on comprehensive project analysis.
+        
+        Args:
+            project_path (str): Path to the project directory
+        
+        Returns:
+            str: Generated README content
+        """
+        # Analyze the project comprehensively
+        project_analysis = self.analyze_project_structure(project_path)
+        
+        # Prepare a detailed prompt for the LLM
+        template = """
+        Generate a comprehensive README.md based on the following project analysis:
+
+        PROJECT STRUCTURE:
+        {project_structure}
+
+        FILE CONTENTS:
+        {file_contents}
+
+        CODE INSIGHTS:
+        {code_insights}
+
+        REQUIREMENTS:
+        {requirements}
+
+        Based on this information, create a professional, detailed README.md that:
+        - Explains the project's purpose and functionality
+        - Describes key features and components
+        - Provides clear setup and usage instructions
+        - Highlights technical details
+        - Includes any relevant dependencies or prerequisites
+
+        Ensure the README is informative, well-structured, and tailored to the specific project.
+        """
+
+        # Prepare context for the LLM
+        context = {
+            "project_structure": str(project_analysis.get('project_structure', 'No structure information')),
+            "file_contents": '\n'.join([f"{k}:\n{v}" for k, v in project_analysis.get('file_contents', {}).items()]),
+            "code_insights": '\n'.join([f"{k}:\n{str(v)}" for k, v in project_analysis.get('code_insights', {}).items()]),
+            "requirements": '\n'.join(project_analysis.get('requirements', []))
         }
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_fixed(60),  # Wait 60 seconds between attempts
-        retry=retry_if_exception_type(Exception)
-    )
-    def generate_readme_section(self, section_name: str, project_info: Dict[str, Any]) -> str:
-        truncated_info = self._prepare_project_info(project_info)
-        template = f"""
-        Based on the following project information, generate the {section_name} section for a README.md file:
-        
-        Project files: {truncated_info['files']}
-        Project directories: {truncated_info['directories']}
-        Main file: {truncated_info['main_file']}
-        Project language: {truncated_info['language']}
-        Dependencies: {truncated_info['dependencies']}
-        
-        Generate a concise and informative {section_name} section in Markdown format:
-        """
-        
-        prompt = ChatPromptTemplate.from_template(template)
-        chain = prompt | self.llm | StrOutputParser()
-        
-        logging.info(f"Attempting to generate section: {section_name}")
         try:
-            result = chain.invoke({"section_name": section_name})
-            logging.info(f"Successfully generated section: {section_name}")
-            return result
+            # Generate README using LLM
+            prompt = ChatPromptTemplate.from_template(template)
+            chain = prompt | self.llm | StrOutputParser()
+            
+            readme_content = chain.invoke(context)
+            return readme_content.strip()
         except Exception as e:
-            logging.error(f"Error generating section {section_name}: {str(e)}")
-            raise
-
-    def create_readme(self, project_path: str, sections: list) -> str:
-        logging.info(f"Scanning project: {project_path}")
-        project_info = scan_project(project_path)
-        
-        readme_content = ""
-        for section in sections:
-            logging.info(f"Starting generation of section: {section}")
-            try:
-                section_content = self.generate_readme_section(section, project_info)
-                readme_content += f"## {section}\n\n{section_content}\n\n"
-                logging.info(f"Successfully added section: {section}")
-                time.sleep(60)  # Wait 60 seconds between sections
-            except Exception as e:
-                logging.error(f"Failed to generate section {section}: {str(e)}")
-                readme_content += f"## {section}\n\n[Error generating content for this section]\n\n"
-        
-        return readme_content
+            logging.error(f"README generation error: {str(e)}")
+            return f"# Project README\n\nUnable to generate README automatically.\n\nError: {str(e)}"
